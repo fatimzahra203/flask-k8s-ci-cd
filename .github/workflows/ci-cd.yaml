@@ -121,26 +121,31 @@ jobs:
             curl -f http://$LB_IP/ || echo "Application not yet responding (normal au premier déploiement)"
           fi
       
-      # ✅ SOLUTION CORRIGÉE : Créer une issue au lieu de commenter
+      # ✅ SOLUTION 1 : Créer une issue au lieu de commenter (avec github-script)
       - name: Create issue on failure
         if: failure()
-        uses: actions/create-issue@v2
+        uses: actions/github-script@v6
         with:
-          title: "🚨 Déploiement échoué - ${{ github.ref }}"
-          body: |
-            ## Déploiement échoué
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Déploiement échoué - ${{ github.ref }}',
+              body: `## Déploiement échoué ❌
             
             **Branch** : ${{ github.ref }}
             **Commit** : ${{ github.sha }}
             **Auteur** : ${{ github.actor }}
+            **Run ID** : ${{ github.run_id }}
             
-            ### Actions à prendre :
+            ### 📋 Actions à prendre :
             1. Consultez les [logs du workflow](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
             2. Vérifiez les erreurs dans les étapes
             3. Corrigez le code et refaites un push
             
-            ### Commandes utiles pour déboguer :
-            ```bash
+            ### 🔧 Commandes utiles pour déboguer :
+            \`\`\`bash
             # Vérifier les pods
             kubectl get pods
             
@@ -149,12 +154,13 @@ jobs:
             
             # Décrire le pod pour voir les erreurs
             kubectl describe pod <pod-name>
-            ```
-          labels: |
-            bug
-            deployment
-          assignees: |
-            ${{ github.actor }}
+            
+            # Voir le statut du déploiement
+            kubectl rollout status deployment/app-aws
+            \`\`\`
+            `,
+              labels: ['bug', 'deployment', 'ci-cd-failed']
+            })
       
       # ✅ Alternative : Envoyer une notification Slack au lieu de GitHub
       - name: Send Slack notification
