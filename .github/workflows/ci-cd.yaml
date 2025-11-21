@@ -12,7 +12,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Configure AWS
+    - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -20,13 +20,10 @@ jobs:
         aws-region: eu-west-3
 
     - name: Test AWS login
-      run: aws sts get-caller-identity    
+      run: aws sts get-caller-identity
 
-    - name: Login to ECR
+    - name: Login to Amazon ECR
       uses: aws-actions/amazon-ecr-login@v2
-
-    - name: Check ECR login
-      run: aws ecr describe-repositories
 
     - name: Build and push Docker image
       run: |
@@ -34,9 +31,23 @@ jobs:
         docker build -t $IMAGE .
         docker push $IMAGE
 
-    - name: Configure kubectl
+    - name: Configure kubectl for EKS
       run: |
-        aws eks update-kubeconfig --name cluster-ci-cd --region eu-west-3 --role-arn arn:aws:iam::022694873939:role/EKSClusterRole
+        aws eks update-kubeconfig \
+          --name cluster-ci-cd \
+          --region eu-west-3 \
+          --role-arn arn:aws:iam::022694873939:role/EKSClusterRole
+
+    - name: Wait until cluster is ACTIVE
+      run: |
+        echo "Checking EKS cluster status..."
+        STATUS=$(aws eks describe-cluster --name cluster-ci-cd --query "cluster.status" --output text)
+        while [ "$STATUS" != "ACTIVE" ]; do
+          echo "Cluster status is $STATUS. Waiting 15s..."
+          sleep 15
+          STATUS=$(aws eks describe-cluster --name cluster-ci-cd --query "cluster.status" --output text)
+        done
+        echo "Cluster is ACTIVE!"
 
     - name: Deploy on Kubernetes
       run: kubectl apply -f deployment.yaml
