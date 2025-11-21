@@ -25,6 +25,10 @@ jobs:
     - name: Login to ECR
       uses: aws-actions/amazon-ecr-login@v2
 
+    - name: Check ECR login
+      run: aws ecr describe-repositories
+
+
     - name: Build and push Docker image
       run: |
         IMAGE=022694873939.dkr.ecr.eu-west-3.amazonaws.com/flask-web-app:latest
