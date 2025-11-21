@@ -20,7 +20,7 @@ jobs:
         aws-region: us-east-1
 
     - name: Test AWS login
-      run: aws sts get-caller-identity    
+      run: aws sts get-caller-identity2    
 
     - name: Login to ECR
       uses: aws-actions/amazon-ecr-login@v2
