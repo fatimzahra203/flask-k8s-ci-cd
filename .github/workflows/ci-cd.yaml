@@ -36,7 +36,7 @@ jobs:
 
     - name: Configure kubectl
       run: |
-        aws eks update-kubeconfig --name cluster-ci/cd --region eu-west-3 --role-arn arn:aws:iam::022694873939:role/EKSClusterRole
+        aws eks update-kubeconfig --name cluster-ci-cd --region eu-west-3 --role-arn arn:aws:iam::022694873939:role/EKSClusterRole
 
     - name: Deploy on Kubernetes
       run: kubectl apply -f deployment.yaml
