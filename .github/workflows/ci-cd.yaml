@@ -63,4 +63,4 @@ jobs:
         echo "Cluster is ACTIVE!"
 
     - name: Deploy on Kubernetes
-      run: kubectl apply -f deployment.yaml --validate=false
+      run: kubectl apply -f deployment.yaml
