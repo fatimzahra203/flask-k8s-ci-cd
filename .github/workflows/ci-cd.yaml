@@ -2,39 +2,123 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
-
+    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-
-    - name: Configure AWS
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: eu-west-3
-
-    - name: Test AWS login
-      run: aws sts get-caller-identity    
-
-    - name: Login to ECR
-      uses: aws-actions/amazon-ecr-login@v2
-
-    - name: Check ECR login
-      run: aws ecr describe-repositories
-
-
-    - name: Build and push Docker image
-      run: |
-        IMAGE=022694873939.dkr.ecr.eu-west-3.amazonaws.com/flask-web-app:latest
-        docker build -t $IMAGE .
-        docker push $IMAGE
-
-    - name: Deploy on Kubernetes
-      run: |
-        kubectl apply -f deployment.yaml
+      # 1. Récupérer le code
+      - uses: actions/checkout@v3
+      
+      # 2. Configurer les credentials AWS
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-3
+      
+      # 3. Exécuter les tests unitaires
+      - name: Run tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+          pytest tests/
+      
+      # 4. Se connecter à ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      
+      # 5. Construire l'image Docker
+      - name: Build Docker image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: flask-web-app
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          docker tag $REGISTRY/$REPOSITORY:$IMAGE_TAG $REGISTRY/$REPOSITORY:latest
+      
+      # 6. Push l'image vers ECR
+      - name: Push image to ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: flask-web-app
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          docker push $REGISTRY/$REPOSITORY:latest
+      
+      # 7. Installer kubectl et eksctl
+      - name: Install kubectl and eksctl
+        run: |
+          curl -o kubectl https://amazon-eks.s3.us-west-2.amazonaws.com/1.27.0/2023-03-17/bin/linux/amd64/kubectl
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          
+          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin/
+      
+      # 8. Mettre à jour le kubeconfig
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name spring-spot-cluster --region eu-west-3
+      
+      # 9. Mettre à jour le deployment.yaml avec la nouvelle image
+      - name: Update deployment image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: flask-web-app
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          sed -i "s|image:.*|image: $REGISTRY/$REPOSITORY:$IMAGE_TAG|g" deployment.yaml
+      
+      # 10. Déployer sur EKS
+      - name: Deploy to EKS
+        run: |
+          kubectl apply -f deployment.yaml
+          kubectl rollout status deployment/app-aws --timeout=5m
+      
+      # 11. Vérifier le déploiement
+      - name: Verify deployment
+        run: |
+          kubectl get pods
+          kubectl get svc
+          
+          # Attendre que le LoadBalancer obtienne une IP
+          for i in {1..30}; do
+            LB_IP=$(kubectl get svc app-aws -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            if [ ! -z "$LB_IP" ]; then
+              echo "LoadBalancer IP: $LB_IP"
+              break
+            fi
+            echo "En attente de l'IP du LoadBalancer... ($i/30)"
+            sleep 10
+          done
+      
+      # 12. Tests de santé (optionnel)
+      - name: Health check
+        run: |
+          LB_IP=$(kubectl get svc app-aws -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          if [ ! -z "$LB_IP" ]; then
+            curl -f http://$LB_IP/ || echo "Application not yet responding"
+          fi
+      
+      # 13. Notification en cas d'erreur
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ Le déploiement a échoué. Vérifiez les logs.'
+            })
